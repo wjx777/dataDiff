@@ -1,0 +1,387 @@
+Option Explicit
+
+Private SelSrcCols As Variant      ' 選択された範囲の比較元列情報
+Private SelDesCols As Variant      ' 選択された範囲の比較先列情報
+
+
+'===================================================================================================
+' 画面　初期化
+'
+'===================================================================================================
+Private Sub UserForm_Initialize()
+
+    ' 比較オプションリストビューのヘッダ設定
+    With lvDiffOptions
+        .ColumnHeaders.Add , "key", "キー", 30
+        .ColumnHeaders.Add , "src_col_no", "元列番", 0
+        .ColumnHeaders.Add , "src_col_name", "元列名", 220
+        .ColumnHeaders.Add , "des_col_no", "先列番", 0
+        .ColumnHeaders.Add , "des_col_name", "先列名", 220
+    End With
+
+End Sub
+
+
+'===================================================================================================
+' 比較オプション初期化ボタン　クリック
+'
+'===================================================================================================
+Private Sub cmdInitDiffOption_Click()
+    
+    ' 比較元データの範囲 必須チェック
+    If reSrcRange.Value = "" Then
+        MsgBox "比較元データの範囲を選択ください。"
+        Exit Sub
+    End If
+    
+    ' 比較先データの範囲 必須チェック
+    If reDesRange.Value = "" Then
+        MsgBox "比較先データの範囲を選択ください。"
+        Exit Sub
+    End If
+    
+    ' 比較オプション初期化
+    Call InitDiffOption
+    
+End Sub
+
+
+'===================================================================================================
+' 列比較オプション追加ボタン　クリック
+'
+'===================================================================================================
+Private Sub cmdAddDiffColOpt_Click()
+
+    If cmbSrcCol.ListIndex = -1 Then
+        MsgBox "比較元列を選択ください。"
+        Exit Sub
+    End If
+    
+    If cmbDesCol.ListIndex = -1 Then
+        MsgBox "比較先列を選択ください。"
+        Exit Sub
+    End If
+
+    ' 列比較オプション情報を比較オプションリストビューに追加
+    With lvDiffOptions.ListItems.Add
+        .Text = ""
+        .Checked = chkIsKey.Value       ' キー
+        .SubItems(1) = cmbSrcCol.Value  ' 元列番
+        .SubItems(2) = cmbSrcCol.Text   ' 元列名
+        .SubItems(3) = cmbDesCol.Value  ' 先列番
+        .SubItems(4) = cmbDesCol.Text   ' 先列名
+    End With
+    
+    ' 選択された比較元列を削除
+    Call RemoveCmbSelItem(cmbSrcCol)
+    
+    ' 選択された比較先列を削除
+    Call RemoveCmbSelItem(cmbDesCol)
+    
+    
+End Sub
+
+
+'===================================================================================================
+' 列比較オプション削除ボタン　クリック
+'
+'===================================================================================================
+Private Sub cmdDelDiffColOpt_Click()
+
+    Dim i As Long
+    Dim li As ListItem
+    
+    'リストの後ろの方から、選択されているアイテムを削除
+    For i = lvDiffOptions.ListItems.Count To 1 Step -1
+    
+        Set li = lvDiffOptions.ListItems(i)
+      
+        If li.Selected Then
+            ' 選択した項目を比較オプションの比較元列のコンボボックスに追加
+            With cmbSrcCol
+                .AddItem ""
+                .Column(0, .ListCount - 1) = li.SubItems(1)
+                .Column(1, .ListCount - 1) = li.SubItems(2)
+            End With
+            
+            ' 選択した項目を比較オプションの比較先列のコンボボックスに追加
+            With cmbDesCol
+                .AddItem ""
+                .Column(0, .ListCount - 1) = li.SubItems(3)
+                .Column(1, .ListCount - 1) = li.SubItems(4)
+            End With
+            
+            ' 比較オプションのリストから選択した項目を削除
+            lvDiffOptions.ListItems.Remove li.Index
+            
+        End If
+        
+    Next i
+
+End Sub
+
+
+
+'===================================================================================================
+' 列比較オプション上へボタン　クリック
+'
+'===================================================================================================
+Private Sub cmdUpDiffColOpt_Click()
+
+    Dim i, cnt, ind As Long
+    
+    For i = 1 To lvDiffOptions.ListItems.Count
+        If lvDiffOptions.ListItems(i).Selected = True Then
+            cnt = cnt + 1
+            ind = i
+        End If
+    Next i
+    
+    If cnt <> 1 Then
+        MsgBox "一行を選択ください。"
+        Exit Sub
+    End If
+    
+    If ind = 1 Then
+        MsgBox "選択された行を一番トップです。"
+        lvDiffOptions.SetFocus
+        Exit Sub
+    End If
+    
+    Call MoveItem(lvDiffOptions, True)
+   
+    lvDiffOptions.SetFocus
+    
+End Sub
+
+
+
+'===================================================================================================
+' 列比較オプション下へボタン　クリック
+'
+'===================================================================================================
+Private Sub cmdDownDiffColOpt_Click()
+    
+    Dim i, cnt, ind As Long
+    
+    For i = 1 To lvDiffOptions.ListItems.Count
+        If lvDiffOptions.ListItems(i).Selected = True Then
+            cnt = cnt + 1
+            ind = i
+        End If
+    Next i
+    
+    If cnt <> 1 Then
+        MsgBox "一行を選択ください。"
+        Exit Sub
+    End If
+    
+    If ind = lvDiffOptions.ListItems.Count Then
+        MsgBox "選択された行を一番ラストです。"
+        lvDiffOptions.SetFocus
+        Exit Sub
+    End If
+    
+    Call MoveItem(lvDiffOptions, False)
+   
+    lvDiffOptions.SetFocus
+    
+End Sub
+
+
+
+'===================================================================================================
+' 比較ボタン　クリック
+'
+'===================================================================================================
+Private Sub cmdDiff_Click()
+
+    Dim di As DiffInfo
+    
+    di = GetDiffInfo()
+    
+    
+    Application.ScreenUpdating = False
+    Call Diff(di)
+    Application.ScreenUpdating = True
+    
+    Unload Me
+    
+End Sub
+
+
+
+'===================================================================================================
+' リストビュー項目上へ移動
+' [I] lv リストビュー
+' [O] upDownFlg　上下移動フラグ　True:上へ、False:下へ
+'===================================================================================================
+Function GetDiffInfo() As DiffInfo
+    
+    Dim i As Long
+    Dim di As DiffInfo
+    
+    di.SRC_RANGE = reSrcRange.Value
+    di.SRC_HAS_HEADER = chkHasSrcHeader.Value
+    
+    di.DES_RANGE = reDesRange.Value
+    di.DES_HAS_HEADER = chkHasDesHeader.Value
+    
+    
+    ReDim di.DiffCols(1 To lvDiffOptions.ListItems.Count)
+    
+    '
+    For i = 1 To lvDiffOptions.ListItems.Count
+        di.DiffCols(i).IS_KEY = lvDiffOptions.ListItems(i).Checked
+        di.DiffCols(i).SRC_COL_NO = CInt(lvDiffOptions.ListItems(i).SubItems(1))
+        di.DiffCols(i).SRC_COL_NAME = lvDiffOptions.ListItems(i).SubItems(2)
+        di.DiffCols(i).DES_COL_NO = CInt(lvDiffOptions.ListItems(i).SubItems(3))
+        di.DiffCols(i).DES_COL_NAME = lvDiffOptions.ListItems(i).SubItems(4)
+    Next i
+    
+    GetDiffInfo = di
+    
+End Function
+
+
+'===================================================================================================
+' リストビュー項目上へ移動
+' [I] lv リストビュー
+' [O] upDownFlg　上下移動フラグ　True:上へ、False:下へ
+'===================================================================================================
+Sub MoveItem(lv As ListView, upDownFlg As Boolean)
+
+    Dim i, ind, colCnt, desInd As Long
+    
+    Dim srcSubItems As Variant
+    Dim srcChecked As Boolean
+    
+    
+    colCnt = lv.ColumnHeaders.Count - 1
+    ReDim srcSubItems(1 To colCnt)
+    
+    '
+    ind = lv.SelectedItem.Index
+    
+    ' 上へ移動の場合
+    If upDownFlg = True Then
+        desInd = ind - 1
+    Else
+        desInd = ind + 1
+    End If
+    
+    
+    ' 移動先の項目情報を変数に保存
+    With lv.ListItems(desInd)
+        srcChecked = .Checked
+        For i = 1 To colCnt
+            srcSubItems(i) = .SubItems(i)
+        Next i
+    End With
+
+    ' 移動元の項目情報を移動先の項目情報に設定
+    With lv.ListItems(desInd)
+        .Selected = True
+        .Checked = lv.ListItems(ind).Checked
+        For i = 1 To colCnt
+            .SubItems(i) = lv.ListItems(ind).SubItems(i)
+        Next i
+
+    End With
+    
+    ' 保存され項目情報の変数を移動元の項目情報に設定
+    With lv.ListItems(ind)
+        .Selected = False
+        .Checked = srcChecked
+        For i = 1 To colCnt
+            .SubItems(i) = srcSubItems(i)
+        Next i
+    End With
+    
+End Sub
+
+
+'===================================================================================================
+' 比較オプション初期化初期化処理
+'
+'===================================================================================================
+Sub InitDiffOption()
+
+    ' 比較元列のコンボボックス　初期化
+    cmbSrcCol.Clear
+    If reSrcRange.Value <> "" Then
+        SelSrcCols = GetRowArr2(Range(reSrcRange.Value).Value, 1, chkHasSrcHeader.Value)
+        cmbSrcCol.List = SelSrcCols
+    Else
+        If IsArray(SelSrcCols) Then
+            Erase SelSrcCols
+        End If
+    End If
+    
+    ' 比較先列のコンボボックス　初期化
+    cmbDesCol.Clear
+    If reDesRange.Value <> "" Then
+        SelDesCols = GetRowArr2(Range(reDesRange.Value).Value, 1, chkHasDesHeader.Value)
+        cmbDesCol.List = SelDesCols
+    Else
+        If IsArray(SelSrcCols) Then
+            Erase SelDesCols
+        End If
+    End If
+    
+    '
+    
+    ' 比較オプションリストビュー　初期化
+    lvDiffOptions.ListItems.Clear
+    
+End Sub
+
+
+'===================================================================================================
+' コンボボックス選択された項目を削除　処理
+' [I] cmb コンボボックス
+'===================================================================================================
+Sub RemoveCmbSelItem(cmb As ComboBox)
+    
+    Dim selIndex As Long
+    With cmb
+        selIndex = .ListIndex
+        If selIndex <> .ListCount - 1 Then
+            .ListIndex = (selIndex + 1)
+        Else
+            .ListIndex = (selIndex - 1)
+        End If
+        .RemoveItem (selIndex)
+    End With
+End Sub
+
+
+
+Function GetRowArr(ByRef arr As Variant, rowNo As Long) As Variant
+    GetRowArr = WorksheetFunction.Index(arr, rowNo)
+End Function
+
+
+
+Function GetRowArr2(ByRef arr As Variant, rowNo As Long, Optional hasHeader As Boolean = True) As Variant
+    
+    Dim i As Long
+    Dim retArr As Variant
+    
+    ReDim retArr(1 To UBound(arr, 2), 1 To 2)
+    
+    For i = 1 To UBound(arr, 2)
+        retArr(i, 1) = i
+        
+        If rowNo = 1 And hasHeader = False Then
+            retArr(i, 2) = "第" & Format(i, "000") & "列"
+        Else
+            retArr(i, 2) = arr(rowNo, i)
+        End If
+        
+    Next i
+    
+    GetRowArr2 = retArr
+    
+End Function
+
