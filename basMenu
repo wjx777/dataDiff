@@ -1,0 +1,58 @@
+Option Explicit
+
+
+'*******************************************************************************
+' 機能          : メニューを追加
+' 返り値        : なし
+' 引き数        : なし
+' 機能説明      : メニューを追加
+'*******************************************************************************
+Sub AddMenu()
+
+    Dim NewM As CommandBarControl
+    Dim NewC As CommandBarControl
+    
+    ' メニューをクリア
+    Call ClearMenu
+    
+    '新しいメニュー(データ比較支援ツール)を追加する
+    Set NewM = Application.CommandBars("Worksheet Menu Bar").Controls.Add(Type:=msoControlPopup)
+    NewM.Caption = "データ比較支援ツール"
+    
+    '比較コマンドを追加する(3)
+    Set NewC = NewM.Controls.Add
+    With NewC
+        .Caption = "両範囲データ比較(&c)"
+        .OnAction = "btnDiff_Click"
+        .BeginGroup = False
+    End With
+    
+End Sub
+
+
+'*******************************************************************************
+' 機能          : 二つ範囲データを比較
+' 返り値        : なし
+' 引き数        : なし
+' 機能説明      : 二つ範囲データを比較
+'*******************************************************************************
+Private Sub btnDiff_Click()
+    frmDataDiff.Show
+End Sub
+
+
+'*******************************************************************************
+' 機能          : メニューをクリア
+' 返り値        : なし
+' 引き数        : なし
+' 機能説明      : メニューをクリア
+'*******************************************************************************
+Sub ClearMenu()
+
+On Error GoTo ErrHand
+    Dim cbrCmd As CommandBar
+    Set cbrCmd = Application.CommandBars("Worksheet Menu Bar")
+    cbrCmd.Controls("データ比較支援ツール").Delete
+ErrHand:
+    
+End Sub
