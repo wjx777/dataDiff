@@ -1,0 +1,243 @@
+Option Explicit
+
+' 重複区分
+Enum DupType
+    BOTH_OK = 0             ' 両方データ[OK]
+    SRC_NG = 1              ' 比較元データ[NG]
+    DES_NG = 2              ' 比較先データ[NG]
+    BOTH_NG = 3             ' 両方データ[NG]
+End Enum
+
+
+
+'*******************************************************************************
+' 機能          : 比較データユニークチェック
+' 返り値        : 0:両方データ[OK]；1:比較元データ[NG]；2:比較先データ[NG]；3:両方データ[NG]
+' 引き数        : di[I] - 比較設定情報
+'                 s_data[I] - 比較元データ
+'                 d_data[I] - 比較先データ
+'                 keys[I] - データのキーの列番のインデックス
+' 機能説明      : 比較データユニークチェック
+'*******************************************************************************
+Function CheckUnique(di As DiffInfo, s_data As Variant, d_data As Variant, keys() As Long) As DupType
+
+    Dim ret As DupType
+    Dim ws As Worksheet
+    Dim startColIndex As Long
+    
+    Dim dicSrcDup As Dictionary       ' 比較元重複チェック用のDictionaryオブジェクト
+    Dim dicDesDup As Dictionary       ' 比較先重複チェック用のDictionaryオブジェクト
+    
+    ' ==========================================================================
+    ' 1.重複データ存在チェックする
+    ' ==========================================================================
+    ' 比較元重複データが有った場合
+    If GetDupData(s_data, keys, dicSrcDup) = True Then
+        ret = ret + DupType.SRC_NG
+    End If
+    
+    ' 比較先重複データが有った場合
+    If GetDupData(d_data, keys, dicDesDup) = True Then
+        ret = ret + DupType.DES_NG
+    End If
+    
+    ' 両方データ重複がいない場合
+    If ret = DupType.BOTH_OK Then
+        CheckUnique = ret
+        Exit Function
+    End If
+    
+    ' ==========================================================================
+    ' 2.重複データをシートに出力する
+    ' ==========================================================================
+    ' 比較結果の出力用シートを作成
+    Call AddSheet(ThisWorkbook, ws, "@", 9)
+    Call AutoSetSheetName(ws, "重複")
+    
+    ' ヘッダを作成
+    Call CreateDupDataHeader(di, ws, ret)
+    
+    ' 両方重複データがあった場合
+    If ret = DupType.BOTH_NG Then
+        startColIndex = 3 + UBound(di.DiffCols)
+    Else
+        startColIndex = 2
+    End If
+    
+    ' 比較元重複データがあった場合
+    If (ret And DupType.SRC_NG) = DupType.SRC_NG Then
+        Call CreateDupDataRows(s_data, dicSrcDup, ws, 2)
+    End If
+    
+    ' 比較先重複データがあった場合
+    If (ret And DupType.DES_NG) = DupType.DES_NG Then
+        Call CreateDupDataRows(d_data, dicDesDup, ws, startColIndex)
+    End If
+    
+    CheckUnique = ret
+    
+End Function
+
+
+
+'*******************************************************************************
+' 機能          : 重複データ行作成
+' 返り値        : なし
+' 引き数        : data[I] - データ
+' 　　　        : dic[I] - 重複チェック用のDictionaryオブジェクト
+' 　　　        : ws[I] - データ載せるワックシートオブジェクト
+' 　　　        : startColIndex[I] - 開始行番
+' 機能説明      : 重複データ行作成
+'*******************************************************************************
+Sub CreateDupDataRows(Data As Variant, dic As Dictionary, ws As Worksheet, startColIndex As Long)
+    
+    Dim i, j, n, colCnt, rowIndex As Long
+    Dim var As Variant
+    
+    colCnt = UBound(Data, 2)
+    
+    rowIndex = 3
+    
+    ' キー単位列挙する
+    For Each var In dic.Items
+    
+        n = n + 1
+        
+        ' 同キーデータ行単位列挙する
+        For j = 1 To UBound(var)
+        
+            For i = 1 To colCnt
+                ws.Cells(rowIndex, startColIndex - 1 + i).Value = Data(var(j), i)
+            Next i
+            
+            ' 同キー単位縞模様
+            If n Mod 2 = 0 Then
+                Call Formatting(ws.Range(ws.Cells(rowIndex, startColIndex), ws.Cells(rowIndex, startColIndex + colCnt - 1)), bgColor:=ONE_SIDE_INTERIOR_COLOR)
+            Else
+                Call Formatting(ws.Range(ws.Cells(rowIndex, startColIndex), ws.Cells(rowIndex, startColIndex + colCnt - 1)))
+            End If
+            
+            rowIndex = rowIndex + 1
+            
+        Next j
+        
+    Next var
+        
+End Sub
+
+
+
+'*******************************************************************************
+' 機能          : ヘッダ作成
+' 返り値        : なし
+' 引き数        : di[I] - 比較設定情報
+' 　　　        : ws[I] - ワックシートオブジェクト
+' 機能説明      : ヘッダ作成
+'*******************************************************************************
+Sub CreateDupDataHeader(di As DiffInfo, ws As Worksheet, dt As DupType)
+
+    Dim i, cnt As Long
+    Dim strStyle As String
+    
+    cnt = UBound(di.DiffCols)
+    
+    ' ヘッダスタイルを設定
+    If dt = DupType.BOTH_NG Then
+        ws.Cells(1, 2).Value = HEADER_SRC_DATA
+        Call Formatting(ws.Range(ws.Cells(2, 2), ws.Cells(2, cnt + 1)), styleName:=HEADER_COM_STYPE, fntSize:=9)
+        ws.Cells(1, cnt + 3).Value = HEADER_DES_DATA
+        Call Formatting(ws.Range(ws.Cells(2, cnt + 3), ws.Cells(2, 2 * cnt + 2)), styleName:=HEADER_COM_STYPE, fntSize:=9)
+    Else
+        If dt = DupType.SRC_NG Then
+            ws.Cells(1, 2).Value = HEADER_SRC_DATA
+        Else
+            ws.Cells(1, 2).Value = HEADER_DES_DATA
+        End If
+        
+        Call Formatting(ws.Range(ws.Cells(2, 2), ws.Cells(2, cnt + 1)), styleName:=HEADER_COM_STYPE, fntSize:=9)
+    End If
+    
+    For i = 1 To cnt
+    
+        If dt = DupType.BOTH_NG Then
+            ws.Cells(2, 1 + i).Value = di.DiffCols(i).SRC_COL_NAME
+            ws.Cells(2, cnt + 2 + i).Value = di.DiffCols(i).DES_COL_NAME
+        ElseIf dt = DupType.SRC_NG Then
+            ws.Cells(2, 1 + i).Value = di.DiffCols(i).SRC_COL_NAME
+        ElseIf dt = DupType.DES_NG Then
+            ws.Cells(2, 1 + i).Value = di.DiffCols(i).DES_COL_NAME
+        End If
+
+        
+        ' キー列の場合、キースタイルを設定
+        If di.DiffCols(i).IS_KEY Then
+            If dt = DupType.BOTH_NG Then
+                Call Formatting(ws.Cells(2, 1 + i), styleName:=HEADER_KEY_STYPE, fntSize:=9)
+                Call Formatting(ws.Cells(2, cnt + 2 + i), styleName:=HEADER_KEY_STYPE, fntSize:=9)
+            Else
+                Call Formatting(ws.Cells(2, 1 + i), styleName:=HEADER_KEY_STYPE, fntSize:=9)
+            End If
+        End If
+        
+    Next i
+    
+End Sub
+
+
+
+'*******************************************************************************
+' 機能          : 重複データ取得
+' 返り値        : True:重複データが有り；False:重複データがいない
+' 引き数        : data[I] - データ(二次元配列)
+'                 keys[I] - データのキーの列番のインデックス
+'                 dicDup[O] - 重複データ用Dictionaryオブジェクト
+' 機能説明      : 重複データ取得
+'*******************************************************************************
+Function GetDupData(Data As Variant, keys() As Long, ByRef dicDup As Dictionary) As Boolean
+
+    Dim ret As Boolean
+    Dim i, cnt As Long
+    Dim key As String
+    
+    Dim arrInd() As Long
+    Dim dic As Dictionary
+    
+    Set dic = CreateObject("Scripting.Dictionary")
+    Set dicDup = CreateObject("Scripting.Dictionary")
+    
+    ret = False
+    
+    If IsArray(Data) Then
+    
+        For i = 1 To UBound(Data, 1)
+        
+            key = GetKey(Data, i, keys)
+            
+            If dic.Exists(key) = True Then
+            
+                ret = True
+                
+                If dicDup.Exists(key) = False Then
+                     ReDim Preserve arrInd(1 To 2)
+                     arrInd(1) = dic(key)
+                     arrInd(2) = i
+                     dicDup.Add key, arrInd
+                Else
+                    arrInd = dicDup(key)
+                    cnt = UBound(arrInd) + 1
+                    ReDim Preserve arrInd(1 To cnt)
+                    arrInd(cnt) = i
+                    dicDup(key) = arrInd
+                End If
+            Else
+                dic.Add key, i
+            End If
+            
+        Next i
+        
+    End If
+    
+    GetDupData = ret
+    
+End Function
+
