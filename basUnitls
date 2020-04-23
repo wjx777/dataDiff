@@ -1,0 +1,132 @@
+Option Explicit
+
+
+'*******************************************************************************
+' 新シート挿入
+'*******************************************************************************
+Sub AddSheet(wb As Workbook, ByRef sh As Worksheet, Optional numberFormatLocal As String = "", Optional fontSize As Variant = Null, Optional shName As String = "")
+    
+    Dim cnt As Integer
+    wb.Sheets.Add After:=wb.Sheets(wb.Sheets.Count)
+    Set sh = wb.Sheets(wb.Sheets.Count)
+    
+    If numberFormatLocal <> "" Then
+        sh.Cells.numberFormatLocal = numberFormatLocal
+    End If
+    
+    If Not IsNull(fontSize) Then
+        sh.Cells.Font.Size = fontSize
+    End If
+    
+    If shName <> "" Then
+        cnt = GetShCnt(wb, shName)
+        If cnt = 0 Then
+            sh.Name = shName
+        Else
+           Call AutoSetSheetName(sh, shName & "_")
+        End If
+    End If
+    
+End Sub
+
+
+
+'*******************************************************************************
+' シートの名称を自動設定する
+'*******************************************************************************
+Sub AutoSetSheetName(ByRef sh As Worksheet, Optional shCat As String = "")
+    
+    Dim wb As Workbook
+    Set wb = sh.Parent
+    Dim cnt, no As Integer
+    Dim i As Integer
+    Dim prefix As String
+    
+On Error GoTo ErrHand
+
+    prefix = IIf(shCat = "", ChrW(&H24B9), shCat)
+    
+    For i = 1 To wb.Sheets.Count
+        If InStr(wb.Sheets(i).Name, prefix) = 1 Then
+            no = CInt(Right(wb.Sheets(i).Name, 2))
+            cnt = IIf(no > cnt, no, cnt)
+        End If
+    Next
+    
+    sh.Name = prefix & Format(cnt + 1, "00")
+    
+    Set wb = Nothing
+    Exit Sub
+    
+ErrHand:
+
+End Sub
+
+
+
+'*******************************************************************************
+' 機能          : 指定接頭語のシートのカウントを取得
+' 返り値        : 指定接頭語のシートのカウント
+' 引き数        : wb[I] - ワークブック
+'                 shPrefixName[I] - 指定接頭語
+' 機能説明      : 指定接頭語のシートのカウントを取得
+'*******************************************************************************
+Function GetShCnt(wb As Workbook, shPrefixName As String) As Integer
+    Dim i, cnt As Integer
+    For i = 1 To wb.Sheets.Count
+        If InStr(wb.Sheets(i).Name, shPrefixName) = 1 Then
+            cnt = cnt + 1
+        End If
+    Next i
+    GetShCnt = cnt
+End Function
+
+
+
+'*******************************************************************************
+' 機能          : 指定範囲書式設定
+' 返り値        : なし
+' 引き数        : rng[I] - 指定範囲
+'                 lnStyle[I] - ボーダー罫線スタイル
+'                 fntColor[I] - フォント色
+'                 bgColor[I] - 背景色
+'                 styleName[I] - スタイル名
+'                 fntSize[I] - フォントサイズ
+' 機能説明      : 指定範囲書式設定
+'*******************************************************************************
+Sub Formatting(rng As Range, Optional lnStyle As XlLineStyle = XlLineStyle.xlContinuous, Optional styleName As String = "", Optional fntSize As Long = -1, Optional fntColor As Long = -1, Optional bgColor As Long = -1)
+    
+    rng.Borders.lineStyle = lnStyle
+    
+    If styleName <> "" Then
+        rng.style = styleName
+    End If
+    
+    If fntSize <> -1 Then
+        rng.Font.Size = fntSize
+    End If
+    
+    If fntColor <> -1 Then
+        rng.Font.color = fntColor
+    End If
+    
+    If bgColor <> -1 Then
+        rng.Interior.color = bgColor
+    End If
+End Sub
+
+
+
+'*******************************************************************************
+' 機能          : 指定範囲文字の配置
+' 返り値        : なし
+' 引き数        : rng[I] - 指定範囲
+'                 h_Alignment[I] - 水平位置
+'                 v_Alignment[I] - 垂直位置
+' 機能説明      : 指定範囲文字の配置
+'*******************************************************************************
+Sub Aligning(rng As Range, Optional h_Alignment As Variant = xlGeneral, Optional v_Alignment As Variant = xlCenter)
+    rng.HorizontalAlignment = h_Alignment
+    rng.VerticalAlignment = v_Alignment
+End Sub
+
