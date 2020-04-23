@@ -1,0 +1,570 @@
+Option Explicit
+
+'===============================================================================
+' 構造体宣言
+'===============================================================================
+
+' 列比較設定情報 構造体
+Public Type DiffColInfo
+    IS_KEY                  As Boolean              ' キーかどうか
+    SRC_COL_NO              As Integer              ' 比較元_列番
+    SRC_COL_NAME            As String               ' 比較元_列名
+    DES_COL_NO              As Integer              ' 比較先_列番
+    DES_COL_NAME            As String               ' 比較先_列名
+End Type
+
+
+' 比較設定情報 構造体
+Public Type DiffInfo
+    SRC_RANGE               As String               ' 指定比較元セル範囲
+    SRC_HAS_HEADER          As Boolean              ' 比較元ヘッダ付け有無
+    DES_RANGE               As String               ' 指定比較先セル範囲
+    DES_HAS_HEADER          As Boolean              ' 比較先ヘッダ付け有無
+    DiffCols()              As DiffColInfo          ' 列比較設定情報配列
+End Type
+
+
+' 行比較結果 構造体
+Public Type RowDiffRes
+    SRC_ROW_NO              As Long                 ' 指定比較元セル範囲
+    DES_ROW_NO              As Long                 ' 比較元ヘッダ付け有無
+    DIFF_RES                As DiffType             ' 指定比較先セル範囲
+    ITEM_DIFF()             As Boolean              ' 列比較設定情報配列
+End Type
+
+
+'===============================================================================
+' 列挙型宣言
+'===============================================================================
+
+' 差分区分
+Enum DiffType
+    SRC_ONLY = 1            ' 比較元のみ
+    DES_ONLY = 2            ' 比較先のみ
+    DIFFERENT = 3           ' 相異
+    IDENTICAL = 4           ' 一致
+End Enum
+
+
+'===============================================================================
+' 定数
+'===============================================================================
+' マーク文字コード
+Public Const SRC_ONLY_MARK_CODE         As Long = &H32A7                ' 比較元のみマーク(㊧)文字コード
+Public Const DES_ONLY_MARK_CODE         As Long = &H32A8                ' 比較先のみマーク(㊨)文字コード
+Public Const DIFFERENT_MARK_CODE        As Long = &H2262                ' 相異マーク(?)文字コード
+Public Const IDENTICAL_MARK_CODE        As Long = &H2261                ' 一致マーク(≡)文字コード
+
+' 相異箇所書式
+Public Const DIFF_FONT_COLOR            As Long = &HFF                  ' 赤文字
+Public Const DIFF_INTERIOR_COLOR        As Long = &HCCFFCC              ' 黄緑背景
+
+' 片方書式
+Public Const ONE_SIDE_INTERIOR_COLOR    As Long = &HCCCCFF              ' 桃色背景
+
+' ヘーダ書式
+Public Const HEADER_COM_STYPE           As String = "アクセント 5"      ' ヘーダ共通スタイル
+Public Const HEADER_KEY_STYPE           As String = "アクセント 2"      ' ヘーダキースタイル
+
+' ヘーダ名称
+Public Const HEADER_SRC_DATA            As String = "比較元"            ' 比較元
+Public Const HEADER_DES_DATA            As String = "比較先"            ' 比較先
+Public Const HEADER_DIFF_RES            As String = "比較結果"          ' 比較結果
+
+
+
+
+'*******************************************************************************
+' 機能          : 比較処理
+' 返り値        : なし
+' 引き数        : di[I] - 比較設定情報
+' 機能説明      : 比較処理
+'*******************************************************************************
+Sub Diff(di As DiffInfo)
+    
+    Dim s_data As Variant       ' 比較元データ(二次元配列)
+    Dim d_data As Variant       ' 比較先データ(二次元配列)
+    
+    Dim keys() As Long          ' キー列番配列
+    Dim dic As Dictionary       ' 比較用のDictionaryオブジェクト
+    
+    Dim rowIndex As Long
+    Dim rdr As RowDiffRes
+    Dim ws As Worksheet
+    Dim var As Variant
+    Dim dt As DupType
+    
+On Error GoTo ErrDiff
+
+    ' [比較元データ、比較先データ]を取得
+    Call GetData(di, s_data, d_data)
+    
+    ' キー列番配列を取得
+    Call GetKeyCols(di, keys)
+    
+    ' キーのユニークチェック
+    dt = CheckUnique(di, s_data, d_data, keys)
+    
+    ' 重複データ存在が有った場合
+    If dt <> DupType.BOTH_OK Then
+        MsgBox "キー一意違反データがありました。"
+        Exit Sub
+    End If
+    
+    ' 比較用のDictionaryオブジェクトを取得
+    Set dic = GetDiffDict(s_data, d_data, keys)
+    
+    ' 比較結果の出力用シートを作成
+    Call AddSheet(ThisWorkbook, ws, "@", 9)
+    Call AutoSetSheetName(ws)
+    
+    ' ヘッダを作成
+    Call CreateHeader(di, ws)
+    
+    rowIndex = 3
+    
+    ' 比較用のDictionaryオブジェクトから各比較データ行列挙
+    For Each var In dic.Items
+    
+        ' 比較データ行の比較結果を取得
+        rdr = GetRowDiffRes(var)
+             
+        ' 比較データ行挿入
+        Call InsertDataRow(s_data, d_data, rdr, ws, rowIndex)
+             
+        rowIndex = rowIndex + 1
+
+    Next var
+    
+    Exit Sub
+    
+ErrDiff:
+
+    MsgBox ("両シートのデータ比較時エラーが発生しました。" & vbCrLf & Err.Description)
+    
+End Sub
+
+
+
+'*******************************************************************************
+' 機能          : ヘッダ作成
+' 返り値        : なし
+' 引き数        : di[I] - 比較設定情報
+' 　　　        : ws[I] - ワックシートオブジェクト
+' 機能説明      : ヘッダ作成
+'*******************************************************************************
+Sub CreateHeader(di As DiffInfo, ws As Worksheet)
+
+    Dim i, cnt As Long
+    Dim strStyle As String
+    
+    cnt = UBound(di.DiffCols)
+    
+    ws.Cells(1, 2).Value = HEADER_SRC_DATA
+    ws.Cells(1, cnt + 3).Value = HEADER_DES_DATA
+    
+    ' ヘッダスタイルを設定
+    Call Formatting(ws.Range(ws.Cells(2, 2), ws.Cells(2, cnt + 1)), styleName:=HEADER_COM_STYPE, fntSize:=9)
+    Call Formatting(ws.Range(ws.Cells(2, cnt + 3), ws.Cells(2, 2 * cnt + 2)), styleName:=HEADER_COM_STYPE, fntSize:=9)
+    
+    For i = 1 To cnt
+        
+        ws.Cells(2, 1 + i).Value = di.DiffCols(i).SRC_COL_NAME
+        
+        ws.Cells(2, cnt + 2 + i).Value = di.DiffCols(i).DES_COL_NAME
+        
+        ' キー列の場合、キースタイルを設定
+        If di.DiffCols(i).IS_KEY Then
+            Call Formatting(ws.Cells(2, 1 + i), styleName:=HEADER_KEY_STYPE, fntSize:=9)
+            Call Formatting(ws.Cells(2, cnt + 2 + i), styleName:=HEADER_KEY_STYPE, fntSize:=9)
+        End If
+        
+    Next i
+    
+    ' 比較結果列設定
+    ws.Cells(2, cnt + 2).Value = HEADER_DIFF_RES
+    Call Aligning(ws.Columns(cnt + 2), h_Alignment:=xlCenter)
+    
+End Sub
+
+
+
+'*******************************************************************************
+' 機能          : 比較データ行挿入
+' 返り値        : なし
+' 引き数        : s_data[I] - 比較元データ
+' 　　　        : d_data[I] - 比較先データ
+' 　　　        : rdr[I] - 行比較結果
+' 　　　        : ws[I] - ワックシートオブジェクト
+' 　　　        : rowIndex[I] - ワックシートオブジェクト
+' 機能説明      : 比較データ行挿入
+'*******************************************************************************
+Sub InsertDataRow(s_data As Variant, d_data As Variant, rdr As RowDiffRes, ws As Worksheet, rowIndex As Long)
+    
+    Dim i, colCnt As Long
+    
+    ' データが比較元のみ
+    If rdr.DIFF_RES = DiffType.SRC_ONLY Then
+    
+        colCnt = UBound(s_data, 2)
+        
+        ' 元データを入力行に設定
+        For i = 1 To colCnt
+            ws.Cells(rowIndex, 1 + i).Value = s_data(rdr.SRC_ROW_NO, i)
+        Next i
+        
+        ' 罫線
+        Call Formatting(ws.Range(ws.Cells(rowIndex, 2), ws.Cells(rowIndex, colCnt + 1)), bgColor:=ONE_SIDE_INTERIOR_COLOR)
+        
+        ' 比較結果(比較元のみ)を設定
+        ws.Cells(rowIndex, colCnt + 2).Value = ChrW(SRC_ONLY_MARK_CODE)
+    
+    ' データが比較先のみ
+    ElseIf rdr.DIFF_RES = DiffType.DES_ONLY Then
+    
+        colCnt = UBound(d_data, 2)
+         
+        ' 先データを入力行に設定
+        For i = 1 To colCnt
+            ws.Cells(rowIndex, colCnt + 2 + i).Value = d_data(rdr.DES_ROW_NO, i)
+        Next i
+        
+        ' 罫線
+        Call Formatting(ws.Range(ws.Cells(rowIndex, colCnt + 3), ws.Cells(rowIndex, 2 * colCnt + 2)), bgColor:=ONE_SIDE_INTERIOR_COLOR)
+
+        ' 比較結果(比較先のみ)を設定
+        ws.Cells(rowIndex, colCnt + 2).Value = ChrW(DES_ONLY_MARK_CODE)
+     
+    ' データが一致
+    ElseIf rdr.DIFF_RES = DiffType.IDENTICAL Then
+    
+        colCnt = UBound(s_data, 2)
+        
+        ' 先データ、元データを入力行に設定
+        For i = 1 To colCnt
+            ' 元データを入力行に設定
+            ws.Cells(rowIndex, 1 + i).Value = s_data(rdr.SRC_ROW_NO, i)
+            
+            ' 先データを入力行に設定
+            ws.Cells(rowIndex, colCnt + 2 + i).Value = d_data(rdr.DES_ROW_NO, i)
+        Next i
+        
+        ' 罫線
+        Call Formatting(ws.Range(ws.Cells(rowIndex, 2), ws.Cells(rowIndex, colCnt + 1)))
+        Call Formatting(ws.Range(ws.Cells(rowIndex, colCnt + 3), ws.Cells(rowIndex, 2 * colCnt + 2)))
+          
+        ' 比較結果(一致)を設定
+        ws.Cells(rowIndex, colCnt + 2).Value = ChrW(IDENTICAL_MARK_CODE)
+    
+    ' データが相異
+    ElseIf rdr.DIFF_RES = DiffType.DIFFERENT Then
+    
+        colCnt = UBound(s_data, 2)
+        
+        ' 先データ、元データを入力行に設定
+        For i = 1 To colCnt
+        
+            ' 先データを入力行に設定
+            ws.Cells(rowIndex, 1 + i).Value = s_data(rdr.SRC_ROW_NO, i)
+            
+            ' 先データ、元データを入力行に設定
+            ws.Cells(rowIndex, colCnt + 2 + i).Value = d_data(rdr.DES_ROW_NO, i)
+            
+            ' 項目が相異の場合
+            If rdr.ITEM_DIFF(i) = True Then
+            
+                ' 元データ　相異の項目セル書式(赤文字、黄緑背景)を設定
+                Call Formatting(ws.Cells(rowIndex, 1 + i), fntColor:=DIFF_FONT_COLOR, bgColor:=DIFF_INTERIOR_COLOR)
+                
+                ' 先データ　相異の項目セル書式(赤文字、黄緑背景)を設定
+                Call Formatting(ws.Cells(rowIndex, colCnt + 2 + i), fntColor:=DIFF_FONT_COLOR, bgColor:=DIFF_INTERIOR_COLOR)
+                
+            End If
+            
+        Next i
+        
+        ' 元データ罫線
+        Call Formatting(ws.Range(ws.Cells(rowIndex, 2), ws.Cells(rowIndex, colCnt + 1)))
+        
+        ' 先データ罫線
+        Call Formatting(ws.Range(ws.Cells(rowIndex, colCnt + 3), ws.Cells(rowIndex, 2 * colCnt + 2)))
+        
+        ' 比較結果(相異)を設定
+        ws.Cells(rowIndex, colCnt + 2).Value = ChrW(DIFFERENT_MARK_CODE)
+        
+    End If
+    
+End Sub
+
+
+
+'*******************************************************************************
+' 機能          : [比較元データ、比較先データ]を取得
+' 返り値        : なし
+' 引き数        : di[I] - 比較設定情報
+' 　　　        : s_data[O] - 比較元データ(二次元配列)
+' 　　　        : d_data[O] - 比較先データ(二次元配列)
+' 機能説明      : [比較元データ、比較先データ]を取得
+'*******************************************************************************
+Sub GetData(di As DiffInfo, ByRef s_data As Variant, ByRef d_data As Variant)
+
+    Dim i, j, n, sCnt, dCnt, sStart, dStart As Long
+    Dim sd As Variant
+    Dim dd As Variant
+    
+    ' 比較元の元データを取得
+    sd = Range(di.SRC_RANGE).Value
+    
+    n = 0
+    sStart = 1
+    sCnt = UBound(sd)
+    
+    ' 選択された比較元セル範囲がヘッダ付けの場合
+    If di.SRC_HAS_HEADER = True Then
+        sStart = sStart + 1
+        sCnt = sCnt - 1
+    End If
+    
+    ' 比較オプション設定リストによって　比較元の元データから比較元データ(比較対象列)を取得
+    If sCnt > 0 Then
+        ReDim s_data(1 To sCnt, 1 To UBound(di.DiffCols))
+        For i = sStart To UBound(sd, 1)
+            n = n + 1
+            For j = 1 To UBound(di.DiffCols)
+                s_data(n, j) = sd(i, di.DiffCols(j).SRC_COL_NO)
+            Next j
+        Next i
+    End If
+    
+    
+    ' 比較先の元データを取得
+    dd = Range(di.DES_RANGE).Value
+    
+    n = 0
+    dStart = 1
+    dCnt = UBound(dd)
+    
+    ' 選択された比較先セル範囲がヘッダ付けの場合
+    If di.DES_HAS_HEADER = True Then
+        dStart = dStart + 1
+        dCnt = dCnt - 1
+    End If
+    
+    ' 比較オプション設定リストによって　比較先の元データから比較先データ(比較対象列)を取得
+    If dCnt > 0 Then
+        ReDim d_data(1 To dCnt, 1 To UBound(di.DiffCols))
+        For i = dStart To UBound(dd, 1)
+            n = n + 1
+            For j = 1 To UBound(di.DiffCols)
+                d_data(n, j) = dd(i, di.DiffCols(j).DES_COL_NO)
+            Next j
+        Next i
+    End If
+    
+End Sub
+
+
+
+'*******************************************************************************
+' 機能          : キー列番配列を取得
+' 返り値        : なし
+' 引き数        : di[I] - 比較設定情報
+' 　　　        : keys[O] - キー列番配列
+' 機能説明      : キー列番配列を取得
+'*******************************************************************************
+Sub GetKeyCols(di As DiffInfo, ByRef keys() As Long)
+
+    Dim i, n As Long
+    
+    For i = LBound(di.DiffCols) To UBound(di.DiffCols)
+        If di.DiffCols(i).IS_KEY = True Then
+            n = n + 1
+            ReDim Preserve keys(1 To n)
+            keys(n) = i
+        End If
+    Next i
+    
+End Sub
+
+
+
+'*******************************************************************************
+' 機能          : 比較用のDictionaryオブジェクトを取得
+' 返り値        : 比較用のDictionaryオブジェクト
+' 引き数        : s_data[I] - 比較元データ(二次元配列)
+' 　　　        : d_data[I] - 比較先データ(二次元配列)
+'                 keyColS[I] - データのキーの列番のインデックス
+' 機能説明      : 比較用のDictionaryオブジェクトを取得
+'*******************************************************************************
+Function GetDiffDict(s_data As Variant, d_data As Variant, keyColS() As Long) As Dictionary
+
+    Dim dic As Dictionary
+    Dim i, j As Long
+    Dim key As String
+    Dim dr() As Variant
+    
+    Dim isDiffs() As Boolean
+    
+    Set dic = CreateObject("Scripting.Dictionary")
+    
+    If IsArray(s_data) Then
+    
+        For i = 1 To UBound(s_data, 1)
+        
+            key = GetKey(s_data, i, keyColS)
+            
+            dr = Array(i, 0, DiffType.SRC_ONLY)
+            
+            dic.Add key, dr
+        Next i
+    Else
+        key = s_data
+        dr = Array(i, 0, DiffType.SRC_ONLY)
+        dic.Add key, dr
+    End If
+    
+    
+    If IsArray(d_data) Then
+         
+        For i = 1 To UBound(d_data, 1)
+            key = GetKey(d_data, i, keyColS)
+            
+            If dic.Exists(key) = True Then
+                dr = dic(key)
+                dr(1) = i
+                ReDim isDiffs(1 To UBound(d_data, 2))
+                
+                If IsDetailsDiff(s_data, dr(0), d_data, dr(1), isDiffs) Then
+                
+                    dr(2) = DiffType.DIFFERENT
+                    ReDim Preserve dr(0 To 3)
+                    dr(3) = isDiffs
+                Else
+                    dr(2) = DiffType.IDENTICAL
+                End If
+                dic(key) = dr
+            Else
+                 dr = Array(0, i, DiffType.DES_ONLY)
+                 dic.Add key, dr
+            End If
+            
+        Next i
+    Else
+        key = d_data
+        
+        If dic.Exists(key) = True Then
+            dr = dic(key)
+            dr(1) = i
+            dr(2) = DiffType.IDENTICAL
+            dic(key) = dr
+        Else
+           dr = Array(0, i, DiffType.DES_ONLY)
+           dic.Add key, dr
+        End If
+        
+    End If
+    
+    
+    Set GetDiffDict = dic
+    
+End Function
+
+
+
+'*******************************************************************************
+' 機能          : 指定データ行のキー情報取得
+' 返り値        : 指定データ行のキー情報
+' 引き数        : data[I] - データ
+'                 rowIndex[I] - データの行インデックス
+'                 keyColS[I] - データのキーの列番のインデックス
+' 機能説明      : 指定データ行のキー情報取得
+'*******************************************************************************
+Function GetKey(ByVal Data As Variant, ByVal rowIndex As Long, ByRef keyColS() As Long) As String
+    
+    Dim key As String
+    Dim j As Long
+    
+    If IsArray(Data) Then
+    
+        If Sgn(keyColS) <> 0 Then
+            For j = LBound(keyColS) To UBound(keyColS)
+                key = key & Data(rowIndex, keyColS(j)) & vbNullChar
+            Next j
+        Else
+            For j = 1 To UBound(Data, 2)
+                key = key & Data(rowIndex, j) & vbNullChar
+            Next j
+        End If
+        
+    Else
+         key = Data
+    End If
+    
+    GetKey = key
+    
+End Function
+
+
+
+'*******************************************************************************
+' 機能          : 行比較結果を取得
+' 返り値        : 行比較結果（RowDiffRes）
+' 引き数        : rdr[I] - 行比較結果(array)
+' 機能説明      : 行比較結果(RowDiffRes)を取得
+'*******************************************************************************
+Function GetRowDiffRes(rdr As Variant) As RowDiffRes
+    
+    Dim cnt As Long
+    Dim ret As RowDiffRes
+    
+    If IsArray(rdr) Then
+    
+        cnt = UBound(rdr)
+        
+        ret.SRC_ROW_NO = rdr(0)
+        ret.DES_ROW_NO = rdr(1)
+        ret.DIFF_RES = rdr(2)
+        
+        If ret.DIFF_RES = DIFFERENT Then
+            ret.ITEM_DIFF = rdr(3)
+        Else
+            Erase ret.ITEM_DIFF
+        End If
+        
+    End If
+    
+    GetRowDiffRes = ret
+    
+End Function
+
+
+
+'*******************************************************************************
+' 機能          : 指定データ行 行差分および行の各項目詳細差分 判定
+' 返り値        : True:差分があり；False：差分がなし
+' 引き数        : s_data[I] - 比較元データ
+'                 s_rowIndex[I] - 元データの行インデックス
+'                 d_data[I] - 比較先データの行インデックス
+'                 d_rowIndex[I] - 比較先データの行インデックス
+'                 isDiffs[O] - 各項目詳細差分配列(True:差分があり；False：差分がなし)
+' 機能説明      : 指定データ行のキー情報取得
+'*******************************************************************************
+Function IsDetailsDiff(ByRef s_data As Variant, ByVal s_rowIndex As Long, ByRef d_data As Variant, ByVal d_rowIndex As Long, ByRef isDiffs() As Boolean) As Boolean
+    
+    Dim i As Long
+    
+    If IsArray(s_data) Then
+        For i = LBound(s_data, 2) To UBound(s_data, 2)
+            If s_data(s_rowIndex, i) <> d_data(d_rowIndex, i) Then
+                isDiffs(i) = True
+                IsDetailsDiff = True
+            End If
+        Next i
+    Else
+        If s_data <> d_data Then
+            isDiffs(i) = True
+            IsDetailsDiff = True
+        End If
+    End If
+    
+End Function
